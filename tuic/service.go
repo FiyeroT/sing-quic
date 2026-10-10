@@ -177,6 +177,7 @@ type serverSession[U comparable] struct {
 	connAccess sync.Mutex
 	connDone   chan struct{}
 	connErr    error
+	authAccess sync.Mutex
 	authDone   chan struct{}
 	authUser   U
 	udpAccess  sync.RWMutex
@@ -230,11 +231,6 @@ func (s *serverSession[U]) handleUniStream(stream *quic.ReceiveStream) error {
 	command := buffer.Byte(1)
 	switch command {
 	case CommandAuthenticate:
-		select {
-		case <-s.authDone:
-			return E.New("authentication: multiple authentication requests")
-		default:
-		}
 		if buffer.Len() < AuthenticateLen {
 			_, err = buffer.ReadFullFrom(stream, AuthenticateLen-buffer.Len())
 			if err != nil {
@@ -254,6 +250,13 @@ func (s *serverSession[U]) handleUniStream(stream *quic.ReceiveStream) error {
 		}
 		if !bytes.Equal(tuicToken, buffer.Range(2+16, 2+16+32)) {
 			return E.New("authentication: token mismatch")
+		}
+		s.authAccess.Lock()
+		defer s.authAccess.Unlock()
+		select {
+		case <-s.authDone:
+			return E.New("authentication: multiple authentication requests")
+		default:
 		}
 		s.authUser = user
 		close(s.authDone)
